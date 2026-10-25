@@ -4,6 +4,7 @@ os.time=function()return clock end
 local handlers,threads,names,statuses,ids={}, {}, {}, {}, {}
 function GetConvar()return string.rep('a',64)end
 function GetConvarInt()return 1 end
+function GetPlayerIdentifierByType(s,t)return nil end
 function GetPlayerIdentifiers(s)return {ids[s]}end
 function GetPlayerName(s)return names[s]end
 function GetPlayers()return {'999'}end -- one full slot
@@ -40,3 +41,16 @@ names[110]=nil;source=110;handlers.playerDropped()
 clock=1040;tick();assert(statuses['license:a'].status=='expired')
 connect(210,'a');tick();assert(statuses['license:a'].position==30,'expired ticket joins tail')
 print('PASS: 10/30 restored before 20s; expired ticket joins tail')
+-- Reserved capacity: regular queue cannot use reserved slots; bypass can.
+local admitted=0
+function GetConvarInt()return 4 end
+Config.MaxPlayers=4;Config.ReservedSlots=2
+function GetPlayers()return {'999','998'}end
+function PerformHttpRequest(url,cb,method,b)
+ if url:find('/identity')then cb(200,{registered=true,username='vip',priority=0,bypass=true})else statuses[b.license]=b;cb(200,{ok=true})end
+end
+names[500]='VIP';ids[500]='license:ffff';source=500
+local c=coroutine.create(function()handlers.playerConnecting('VIP',nil,{defer=function()end,done=function(reason)if not reason then admitted=admitted+1 end end,presentCard=function()end})end)
+resume(c);resume(c);tick();assert(admitted==1,'bypass must use a reserved slot ahead of regular waiters')
+assert(statuses['license:ffff'].status=='connecting')
+print('PASS: bypass admission uses reserved capacity')

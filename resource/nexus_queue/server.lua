@@ -64,7 +64,7 @@ AddEventHandler('playerConnecting', function(name, _, def)
     local identity
     local function lookup()
         local result=false
-        request('/bridge/identity',{license=id},function(data) result=data or {error=true} end)
+        request('/bridge/identity',{license=id,discord=GetPlayerIdentifierByType(src,'discord')},function(data) result=data or {error=true} end)
         while not result do Wait(50) end
         return result
     end
@@ -87,7 +87,14 @@ AddEventHandler('playerConnecting', function(name, _, def)
     if not GetPlayerName(src) then attempts[id]=nil; return end
     -- Re-read after HTTP yields: expired reservations may have been cleaned meanwhile.
     local e=find(id)
-    if not e then sequence=sequence+1;e={license=id,ticket=sequence};queue[#queue+1]=e end
+    if not e then
+        sequence=sequence+1;e={license=id,ticket=sequence,bypass=identity.bypass==true}
+        if e.bypass then
+            local at=#queue+1
+            for i,q in ipairs(queue) do if not q.bypass then at=i;break end end
+            table.insert(queue,at,e)
+        else queue[#queue+1]=e end
+    end
     e.src=src;e.def=def;e.expires=nil;e.name=name;e.rank=identity.priority;e.username=identity.username
     attempts[id]=nil
     -- Central loop alone mutates admission state. No per-connection slot race.
@@ -137,7 +144,8 @@ CreateThread(function()
         local cap=math.min(Config.MaxPlayers,GetConvarInt('sv_maxclients',Config.MaxPlayers))
         -- A grace ticket blocks overtaking until reconnect or expiry.
         local e=queue[1]
-        if e and not e.expires and e.src and occupied<cap then
+        local admissionCap=e and e.bypass and cap or math.max(0,cap-(Config.ReservedSlots or 0))
+        if e and not e.expires and e.src and occupied<admissionCap then
             table.remove(queue,1);e.deadline=now()+Config.JoinTimeoutSeconds;pending[e.license]=e
             publish(e,'connecting');local def=e.def;e.def=nil;def.done()
         end
