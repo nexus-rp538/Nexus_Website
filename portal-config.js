@@ -1,2 +1,2 @@
-// Public API URL only. Never put credentials or bridge secrets here.
+// Public API origin only. Never add a Discord token or client secret here.
 window.PORTAL_CONFIG = {apiBase: ''};

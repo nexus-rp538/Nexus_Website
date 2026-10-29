@@ -1,7 +1,7 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import {spawn} from 'node:child_process';import {mkdtempSync,rmSync} from 'node:fs';import {tmpdir} from 'node:os';import {join} from 'node:path';
 test('register, authenticate, prove game identity, protect bridge and user data',async()=>{
  const temp=mkdtempSync(join(tmpdir(),'nq-'));const port=19000+Math.floor(Math.random()*1000),base=`http://127.0.0.1:${port}`,secret='a'.repeat(64);
- const child=spawn(process.execPath,['server.mjs'],{cwd:new URL('../',import.meta.url),env:{...process.env,PORT:String(port),PUBLIC_URL:base,BRIDGE_SECRET:secret,COOKIE_SECURE:'false',DB_PATH:join(temp,'test.sqlite')},stdio:['ignore','pipe','pipe']});
+ const child=spawn(process.execPath,['server.mjs'],{cwd:new URL('../',import.meta.url),env:{...process.env,ALLOW_PASSWORD_LOGIN:'true',REQUIRE_APPLICATION:'false',PORT:String(port),PUBLIC_URL:base,BRIDGE_SECRET:secret,COOKIE_SECURE:'false',DB_PATH:join(temp,'test.sqlite')},stdio:['ignore','pipe','pipe']});
  try{await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('startup timeout')),5000);child.stdout.once('data',()=>{clearTimeout(timer);resolve()});child.once('exit',()=>reject(Error('server exited'))) });
  const post=(path,data,cookie='',bridge=false,origin=base)=>fetch(base+path,{method:'POST',headers:{'Content-Type':'application/json',Origin:origin,Cookie:cookie,...(bridge?{Authorization:`Bearer ${secret}`}:{})},body:JSON.stringify(data)});
  assert.equal((await post('/bridge/identity',{license:'license:abcd'})).status,401);

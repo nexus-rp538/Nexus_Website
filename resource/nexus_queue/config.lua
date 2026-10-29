@@ -1,6 +1,6 @@
 Config = {
-    Brand = 'QUEUE',
-    Website = 'https://nexus-rp538.github.io/Nexus_Website/',
+    Brand = 'OMEN',
+    Website = 'https://omen-rp2.github.io/Omen_Web/',
     Api = 'http://127.0.0.1:3000',
     GraceSeconds = 20,
     ReservedSlots = 2, -- keep slots available for owner / bypass accounts

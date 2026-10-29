@@ -1,7 +1,7 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import {spawn} from 'node:child_process';import {mkdtempSync,rmSync} from 'node:fs';import {tmpdir} from 'node:os';import {join} from 'node:path';import {DatabaseSync} from 'node:sqlite';import {createHash} from 'node:crypto';
 test('owner identity, priority grants, CORS and branding authorization',async()=>{
  const dir=mkdtempSync(join(tmpdir(),'owner-')),file=join(dir,'db.sqlite'),port=21000+Math.floor(Math.random()*1000),base=`http://127.0.0.1:${port}`,secret='b'.repeat(64),front='https://nexus-rp538.github.io';
- const child=spawn(process.execPath,['server.mjs'],{cwd:new URL('../',import.meta.url),env:{...process.env,PORT:String(port),PUBLIC_URL:base,FRONTEND_URL:front+'/Nexus_Website/',BRIDGE_SECRET:secret,DB_PATH:file},stdio:['ignore','pipe','pipe']});
+ const child=spawn(process.execPath,['server.mjs'],{cwd:new URL('../',import.meta.url),env:{...process.env,ALLOW_PASSWORD_LOGIN:'true',REQUIRE_APPLICATION:'false',PORT:String(port),PUBLIC_URL:base,FRONTEND_URL:front+'/Nexus_Website/',BRIDGE_SECRET:secret,DB_PATH:file},stdio:['ignore','pipe','pipe']});
  try{await new Promise((ok,no)=>{const t=setTimeout(()=>no(Error('startup')),5000);child.stdout.once('data',()=>{clearTimeout(t);ok()})});
  const db=new DatabaseSync(file);const owner='c'.repeat(64),ordinary='d'.repeat(64),sha=t=>createHash('sha256').update(t).digest('hex');
  db.prepare('INSERT INTO users(username,pass,discord_id) VALUES(?,?,?)').run('owner','unused','1445069224899907709');db.prepare('INSERT INTO users(username,pass,discord_id) VALUES(?,?,?)').run('guest','unused','111111111111111111');

@@ -84,6 +84,7 @@ AddEventHandler('playerConnecting', function(name, _, def)
         identity=lookup()
         if identity.error or not identity.registered then finish('Account not linked yet. Finish linking on the website and reconnect.');return end
     end
+    if identity.approved == false then finish('قدّم من موقع أومن وانتظر قبول طلبك قبل دخول السيرفر.'); return end
     if not GetPlayerName(src) then attempts[id]=nil; return end
     -- Re-read after HTTP yields: expired reservations may have been cleaned meanwhile.
     local e=find(id)

@@ -1,3 +1,4 @@
+import {createDiscord,createApplications,startWelcomeBot,DISCORD_DEFAULTS} from './applications.mjs';
 import http from 'node:http';
 import {DatabaseSync} from 'node:sqlite';
 import {randomBytes,scryptSync,timingSafeEqual,createHash} from 'node:crypto';
@@ -11,13 +12,20 @@ const dbPath=process.env.DB_PATH||join(process.env.RAILWAY_VOLUME_MOUNT_PATH||pr
 mkdirSync(dirname(dbPath),{recursive:true});
 const db=new DatabaseSync(dbPath);
 db.exec(`PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, pass TEXT NOT NULL, license TEXT UNIQUE, priority INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY,user_id INTEGER,expires INTEGER);`);
-const OWNER='1445069224899907709';
+const OWNER=process.env.OWNER_DISCORD_ID||'1445069224899907709';
 if(!db.prepare('PRAGMA table_info(users)').all().some(c=>c.name==='discord_id'))db.exec('ALTER TABLE users ADD COLUMN discord_id TEXT');
 db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS discord_identity ON users(discord_id);CREATE TABLE IF NOT EXISTS priorities(discord_id TEXT PRIMARY KEY, label TEXT NOT NULL, expires INTEGER NOT NULL DEFAULT 0);CREATE TABLE IF NOT EXISTS settings(id INTEGER PRIMARY KEY CHECK(id=1),value TEXT NOT NULL);`);
-db.prepare('INSERT OR IGNORE INTO settings VALUES(1,?)').run(JSON.stringify({name:'',image:'',connect:''}));
+db.prepare('INSERT OR IGNORE INTO settings VALUES(1,?)').run(JSON.stringify({name:'OMEN ROLEPLAY',image:'',connect:'',about:'مدينة جديدة، وحكايتك أنت اللي تكتبها. مجتمع عربي للرول بلاي، بتقديم إلكتروني بدون مقابلة.',applicationsOpen:true}));
+for(const [column,type] of [['display_name','TEXT'],['avatar','TEXT']])if(!db.prepare('PRAGMA table_info(users)').all().some(c=>c.name===column))db.exec(`ALTER TABLE users ADD COLUMN ${column} ${type}`);
 const settings=()=>JSON.parse(db.prepare('SELECT value FROM settings WHERE id=1').get().value);
-const frontend=process.env.FRONTEND_URL||'https://nexus-rp538.github.io/Nexus_Website/';
+const frontend=process.env.FRONTEND_URL||'https://omen-rp2.github.io/Omen_Web/';
 const allowed=new Set([origin,new URL(frontend).origin]);
+const discord=createDiscord({token:process.env.DISCORD_BOT_TOKEN,guildId:process.env.DISCORD_GUILD_ID||DISCORD_DEFAULTS.guildId});
+const applications=createApplications({db,discord,owner:OWNER,reviewers:(process.env.REVIEWER_DISCORD_IDS||'').split(',').map(x=>x.trim()).filter(Boolean),siteURL:frontend});
+const jobTimer=setInterval(()=>void applications.drain(),15000);jobTimer.unref();
+void applications.drain();
+void startWelcomeBot({token:process.env.DISCORD_BOT_TOKEN,guildId:discord.guildId,applications}).catch(()=>console.error('Discord bot could not start.'));
+
 const oauthReady=!!(process.env.DISCORD_CLIENT_ID&&process.env.DISCORD_CLIENT_SECRET);
 const bypass=id=>!!id&&(id===OWNER||!!db.prepare('SELECT discord_id FROM priorities WHERE discord_id=? AND (expires=0 OR expires>?)').get(id,Date.now()));
 const codes=new Map(), states=new Map(), rates=new Map(), oauthStates=new Map();
@@ -27,7 +35,7 @@ const hash=x=>createHash('sha256').update(x).digest('hex');
 const safe=(a,b)=>{const x=Buffer.from(a),y=Buffer.from(b);return x.length===y.length&&timingSafeEqual(x,y)};
 const password=(p,salt=randomBytes(16).toString('hex'))=>`${salt}:${scryptSync(p,salt,64).toString('hex')}`;
 const check=(p,v)=>safe(password(p,v.split(':')[0]),v);
-const me=req=>{const t=tokenFrom(req);const u=t&&db.prepare('SELECT u.id,u.username,u.license,u.priority,u.discord_id FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=? AND s.expires>?').get(hash(t),Date.now());return u?{...u,owner:u.discord_id===OWNER,bypass:bypass(u.discord_id)}:null};
+const me=req=>{const t=tokenFrom(req);const u=t&&db.prepare('SELECT u.id,u.username,u.license,u.priority,u.discord_id,u.display_name,u.avatar FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=? AND s.expires>?').get(hash(t),Date.now());return u?{...u,owner:u.discord_id===OWNER,reviewer:applications.reviewer(u),bypass:bypass(u.discord_id)}:null};
 const send=(res,status,data,headers={})=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff',...headers});res.end(JSON.stringify(data));};
 const limited=(key,max)=>{const t=Date.now();let v=rates.get(key);if(!v||v.until<t){v={n:0,until:t+60000};rates.set(key,v)}return ++v.n>max};
 async function body(req){let b='';for await(const c of req){b+=c;if(b.length>16384)throw Error('body too large')}return JSON.parse(b||'{}')}
@@ -37,7 +45,7 @@ const server=http.createServer(async(req,res)=>{try{
  if(allowed.has(req.headers.origin)){res.setHeader('Access-Control-Allow-Origin',req.headers.origin);res.setHeader('Access-Control-Allow-Headers','Content-Type, Authorization');res.setHeader('Access-Control-Allow-Methods','GET, POST, OPTIONS');res.setHeader('Vary','Origin')}
  if(req.method==='OPTIONS'){res.writeHead(204);return res.end()}
  if(path==='/auth/discord'){
-  if(!oauthReady)return send(res,503,{error:'Discord sign-in requires DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET on the API host'});
+  if(!oauthReady||!discord.ready)return send(res,503,{error:'Discord sign-in requires DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET on the API host'});
   if(limited(req.socket.remoteAddress+':oauth',10))return send(res,429,{error:'Try later'});
   const state=randomBytes(32).toString('hex');oauthStates.set(state,Date.now()+300000);
   res.writeHead(302,{Location:'https://discord.com/oauth2/authorize?'+new URLSearchParams({client_id:process.env.DISCORD_CLIENT_ID,redirect_uri:origin+'/auth/discord/callback',response_type:'code',scope:'identify',state}),'Set-Cookie':`oauth_state=${state}; HttpOnly; Secure; SameSite=Lax; Path=/auth; Max-Age=300`});return res.end();
@@ -50,8 +58,12 @@ const server=http.createServer(async(req,res)=>{try{
   if(!r.ok)return send(res,401,{error:'Discord authorization failed'});const auth=await r.json();
   const profile=await fetch('https://discord.com/api/v10/users/@me',{signal:AbortSignal.timeout(10000),headers:{Authorization:'Bearer '+auth.access_token}});if(!profile.ok)return send(res,401,{error:'Discord identity failed'});const d=await profile.json();
   if(!/^\d{17,20}$/.test(d.id))return send(res,401,{error:'Invalid identity'});
+  let member;try{member=await applications.requireMember(d.id)}catch(e){res.writeHead(302,{Location:frontend+'#auth_error='+(e.status===403?'join':'unavailable'),'Cache-Control':'no-store','Set-Cookie':'oauth_state=; HttpOnly; Secure; SameSite=Lax; Path=/auth; Max-Age=0'});return res.end()}applications.onboard(d.id,member);
+
   let user=db.prepare('SELECT id FROM users WHERE discord_id=?').get(d.id);
   if(!user){db.prepare('INSERT INTO users(username,pass,discord_id) VALUES(?,?,?)').run('discord_'+d.id,password(randomBytes(32).toString('hex')),d.id);user=db.prepare('SELECT id FROM users WHERE discord_id=?').get(d.id)}
+  db.prepare('UPDATE users SET display_name=?,avatar=? WHERE id=?').run(String(d.global_name||d.username).slice(0,80),d.avatar?`https://cdn.discordapp.com/avatars/${d.id}/${d.avatar}.png`:'',user.id);
+  void applications.drain();
   const t=issueSession(user.id);res.writeHead(302,{Location:frontend+'#session='+t,'Cache-Control':'no-store','Referrer-Policy':'no-referrer','Set-Cookie':'oauth_state=; HttpOnly; Secure; SameSite=Lax; Path=/auth; Max-Age=0'});return res.end();
  }
  if(path==='/health'&&req.method==='GET')return send(res,200,{ok:true});
@@ -62,9 +74,13 @@ const server=http.createServer(async(req,res)=>{try{
   const b=await body(req);if(typeof b.license!=='string'||!/^license:[a-fA-F0-9]+$/.test(b.license))return send(res,400,{error:'Invalid license'});
   if(path==='/bridge/identity'){
    let u=db.prepare('SELECT * FROM users WHERE license=?').get(b.license);
-   const discord=/^discord:(\d{17,20})$/.exec(String(b.discord||''))?.[1];
-   if(!u&&discord){const byDiscord=db.prepare('SELECT * FROM users WHERE discord_id=?').get(discord);if(byDiscord&&!byDiscord.license){db.prepare('UPDATE users SET license=? WHERE id=?').run(b.license,byDiscord.id);u={...byDiscord,license:b.license}}}
-   if(u)return send(res,200,{registered:true,username:u.username,priority:u.priority,bypass:bypass(u.discord_id)});
+   const memberDiscord=/^discord:(\d{17,20})$/.exec(String(b.discord||''))?.[1];
+   if(!u&&memberDiscord){const byDiscord=db.prepare('SELECT * FROM users WHERE discord_id=?').get(memberDiscord);if(byDiscord&&!byDiscord.license){db.prepare('UPDATE users SET license=? WHERE id=?').run(b.license,byDiscord.id);u={...byDiscord,license:b.license}}}
+   if(u){
+    const whitelist=process.env.REQUIRE_APPLICATION!=='false';let approved=u.discord_id===OWNER||applications.approved(u.discord_id);
+    if(whitelist&&u.discord_id!==OWNER){approved=approved&&discord.ready;if(discord.ready&&u.discord_id){const member=await discord.member(u.discord_id);approved=approved&&!!member}}
+    return send(res,200,{registered:true,username:u.display_name||u.username,priority:u.priority,bypass:bypass(u.discord_id),approved:whitelist?approved:true});
+   }
    // Each attempt replaces the old challenge; never expose a client-selected identity.
    for(const [k,v] of codes)if(v.license===b.license)codes.delete(k);
    const code=randomBytes(6).toString('hex').toUpperCase();codes.set(code,{license:b.license,expires:Date.now()+300000});
@@ -74,21 +90,39 @@ const server=http.createServer(async(req,res)=>{try{
   return send(res,404,{});
  }
  if(path.startsWith('/api/')){
-  if(limited(req.socket.remoteAddress+':all',180))return send(res,429,{error:'حاول بعد دقيقة'});
-  if(req.method==='POST'&&!allowed.has(req.headers.origin))return send(res,403,{error:'Invalid origin'});
   const u=me(req);
-  if(path==='/api/config'&&req.method==='GET')return send(res,200,{...settings(),connect:settings().connect||process.env.CONNECT_URL||'',bridgeReady,oauthReady});
-  if(path==='/api/me'&&req.method==='GET')return send(res,200,{user:u||null,queue:u?.license?(states.get(u.license)||null):null});
+  if(limited((u?'user:'+u.id:req.socket.remoteAddress)+':all',180))return send(res,429,{error:'حاول بعد دقيقة'});
+  if(req.method==='POST'&&!allowed.has(req.headers.origin))return send(res,403,{error:'Invalid origin'});
+  if(path==='/api/config'&&req.method==='GET')return send(res,200,{...settings(),name:settings().name||'OMEN ROLEPLAY',about:settings().about||'مدينة جديدة، وحكايتك أنت اللي تكتبها.',applicationsOpen:settings().applicationsOpen!==false,connect:settings().connect||process.env.CONNECT_URL||'',bridgeReady,oauthReady:oauthReady&&discord.ready,applicationsReady:discord.ready,discordInvite:'https://discord.gg/Gqs7UqyYH'});
+  if(path==='/api/me'&&req.method==='GET')return send(res,200,{user:u||null,application:u?.discord_id?applications.latest(u.discord_id):null,queue:u?.license?(states.get(u.license)||null):null});
   if(path==='/api/admin/priorities'&&req.method==='GET'){if(!u?.owner)return send(res,403,{error:'المالك فقط'});return send(res,200,{items:db.prepare('SELECT * FROM priorities ORDER BY discord_id').all(),ownerId:OWNER})}
+  if(path==='/api/admin/applications'&&req.method==='GET'){
+   if(!applications.reviewer(u))return send(res,403,{error:'ليس لديك صلاحية المراجعة.'});
+   const status=url.searchParams.get('status')||'pending';if(!['pending','accepted','rejected'].includes(status))return send(res,400,{error:'حالة غير صحيحة'});
+   return send(res,200,{items:applications.list(status),integration:u.owner?applications.health():null});
+  }
   if(req.method!=='POST')return send(res,405,{});
   const b=await body(req);
+  if(path==='/api/applications'){
+   if(!u?.discord_id)return send(res,401,{error:'سجّل بحساب Discord الأول.'});
+   if(settings().applicationsOpen===false)return send(res,403,{error:'التقديم مقفول حاليًا.'});
+   if(limited('apply:'+u.discord_id,3))return send(res,429,{error:'استنى دقيقة قبل المحاولة.'});
+   await applications.requireMember(u.discord_id);const application=applications.submit(u.discord_id,b);void applications.drain();return send(res,201,{application});
+  }
+  if(path==='/api/admin/decision'){
+   if(!applications.reviewer(u))return send(res,403,{error:'ليس لديك صلاحية المراجعة.'});
+   const application=applications.decide(u,b);void applications.drain();return send(res,200,{application});
+  }
+  if(path==='/api/admin/retry-discord'){
+   if(!u?.owner)return send(res,403,{error:'المالك فقط'});applications.retry();void applications.drain();return send(res,200,{ok:true});
+  }
   if(path.startsWith('/api/admin/')){
    if(!u?.owner)return send(res,403,{error:'المالك فقط؛ سجل الدخول بحساب Discord الصحيح'});
    if(path==='/api/admin/settings'){
     const name=String(b.name||'').trim().slice(0,60),image=String(b.image||'').trim(),connect=String(b.connect||'').trim();
     if(image&&!/^https:\/\/[^\s]+$/.test(image))return send(res,400,{error:'الصورة تحتاج رابط HTTPS'});
     if(connect&&!/^fivem:\/\/connect\/[a-zA-Z0-9.:[\]-]+$/.test(connect))return send(res,400,{error:'عنوان الاتصال غير صحيح'});
-    db.prepare('UPDATE settings SET value=? WHERE id=1').run(JSON.stringify({name,image,connect}));return send(res,200,{ok:true});
+    db.prepare('UPDATE settings SET value=? WHERE id=1').run(JSON.stringify({...settings(),name:name||'OMEN ROLEPLAY',image,connect,about:String(b.about||'').trim().slice(0,1200),applicationsOpen:b.applicationsOpen!==false}));return send(res,200,{ok:true});
    }
    if(path==='/api/admin/priority'){
     if(!/^\d{17,20}$/.test(String(b.discord_id)))return send(res,400,{error:'Discord ID غير صحيح'});
@@ -99,6 +133,7 @@ const server=http.createServer(async(req,res)=>{try{
    return send(res,404,{});
   }
   if(path==='/api/register'||path==='/api/login'){
+   if(process.env.ALLOW_PASSWORD_LOGIN!=='true')return send(res,403,{error:'التسجيل متاح بحساب Discord وعضوية السيرفر فقط.'});
    if(limited(req.socket.remoteAddress+':auth',10))return send(res,429,{error:'محاولات كثيرة؛ انتظر دقيقة'});
    const {username,password:p}=b;if(typeof username!=='string'||! /^[a-zA-Z0-9_]{3,24}$/.test(username)||typeof p!=='string'||p.length<10||p.length>128)return send(res,400,{error:'اسم إنجليزي 3–24 حرف وكلمة مرور 10–128 حرف'});
    let a=db.prepare('SELECT * FROM users WHERE username=?').get(username);
@@ -119,7 +154,7 @@ const server=http.createServer(async(req,res)=>{try{
   if(path==='/api/logout'){const t=tokenFrom(req);if(t)db.prepare('DELETE FROM sessions WHERE token=?').run(hash(t));return send(res,200,{ok:true},{'Set-Cookie':'nq=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'})}
   return send(res,404,{});
  }
- const files={'/':['index.html','text/html; charset=utf-8'],'/app.js':['app.js','text/javascript; charset=utf-8'],'/style.css':['style.css','text/css; charset=utf-8'],'/portal-config.js':['portal-config.js','text/javascript; charset=utf-8']};const f=files[path];if(!f)return send(res,404,{});
- res.writeHead(200,{'Content-Type':f[1],'X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' https:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",'Referrer-Policy':'no-referrer'});res.end(readFileSync(new URL('./public/'+f[0],import.meta.url)));
-}catch(e){console.error('Request failed:',e.message);if(!res.headersSent)send(res,400,{error:'تعذر تنفيذ الطلب'});else res.end()}});
+ const files={'/':['index.html','text/html; charset=utf-8'],'/app.js':['app.js','text/javascript; charset=utf-8'],'/style.css':['style.css','text/css; charset=utf-8'],'/portal-config.js':['portal-config.js','text/javascript; charset=utf-8']};const assets={'/assets/omen-logo.webp':'image/webp','/assets/omen-teaser.mp4':'video/mp4'};if(assets[path]){const bytes=readFileSync(new URL('./public'+path,import.meta.url));const range=/^bytes=(\d+)-(\d*)$/.exec(req.headers.range||'');if(range){const start=Number(range[1]),end=Math.min(Number(range[2]||bytes.length-1),bytes.length-1);if(start>end||start>=bytes.length){res.writeHead(416,{'Content-Range':`bytes */${bytes.length}`});return res.end()}res.writeHead(206,{'Content-Type':assets[path],'Accept-Ranges':'bytes','Content-Range':`bytes ${start}-${end}/${bytes.length}`,'Content-Length':end-start+1});return res.end(bytes.subarray(start,end+1))}res.writeHead(200,{'Content-Type':assets[path],'Accept-Ranges':'bytes','Content-Length':bytes.length,'Cache-Control':'public, max-age=3600'});return res.end(bytes)}const f=files[path];if(!f)return send(res,404,{});
+ res.writeHead(200,{'Content-Type':f[1],'X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self'; img-src 'self' https:; media-src 'self' https:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",'Referrer-Policy':'no-referrer'});res.end(readFileSync(new URL('./public/'+f[0],import.meta.url)));
+}catch(e){console.error('Request failed:',e.message);if(!res.headersSent)send(res,e.status||400,{error:e.status?e.message:'تعذر تنفيذ الطلب'});else res.end()}});
 server.listen(Number(process.env.PORT||3000),process.env.HOST||'0.0.0.0',()=>console.log('Queue portal ready'));
