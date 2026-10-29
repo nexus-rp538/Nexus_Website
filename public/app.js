@@ -1,10 +1,11 @@
 const $=id=>document.getElementById(id);
 const DEFAULT_LOGO='./assets/omen-logo.webp',INVITE='https://discord.gg/Gqs7UqyYH';
-function validAPI(value){try{const u=new URL(value);return u.protocol==='https:'||(u.protocol==='http:'&&['localhost','127.0.0.1'].includes(u.hostname))?u.origin:''}catch{return ''}}
+function validAPI(value){try{const u=new URL(value);return u.protocol==='https:'||(u.protocol==='http:'&&['localhost','127.0.0.1'].includes(u.hostname))?u.origin+(u.pathname.replace(/\/+$/,'')==='/omen'?'/omen':''):''}catch{return ''}}
 const staticHost=location.hostname.endsWith('.github.io');
 let apiBase=validAPI(window.PORTAL_CONFIG?.apiBase||localStorage.getItem('omen_api')||localStorage.getItem('queue_api')||(!staticHost?location.origin:''));
 let token=sessionStorage.getItem('queue_session')||'',user=null,application=null,config={},loading=false,lastQueue=null,reviewLoading=false,settingsDirty=false;
 const params=new URLSearchParams(location.hash.slice(1));
+if(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(params.get('omen_token')||'')&&(params.get('omen_token')||'').length<5000){token=params.get('omen_token');sessionStorage.setItem('queue_session',token);history.replaceState(null,'',location.pathname+location.search+'#account')}
 if(/^[a-f0-9]{64}$/.test(params.get('session')||'')){token=params.get('session');sessionStorage.setItem('queue_session',token);history.replaceState(null,'',location.pathname+location.search+'#account')}
 let toastTimer;function toast(message){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,8000)}
 function element(tag,text,cls){const node=document.createElement(tag);if(text!==undefined)node.textContent=text;if(cls)node.className=cls;return node}
@@ -50,5 +51,5 @@ $('preferencesbtn').onclick=()=>{$('apiform').elements.api.value=apiBase;$('pref
 const motion=localStorage.getItem('omen_motion')==='reduced'||(!localStorage.getItem('omen_motion')&&matchMedia('(prefers-reduced-motion: reduce)').matches);$('reduceMotion').checked=motion;document.body.classList.toggle('reduced-motion',motion);$('reduceMotion').onchange=e=>{localStorage.setItem('omen_motion',e.target.checked?'reduced':'full');document.body.classList.toggle('reduced-motion',e.target.checked)};
 $('muteVideo').checked=localStorage.getItem('omen_mute')==='true';$('trailer').muted=$('muteVideo').checked;$('muteVideo').onchange=e=>{$('trailer').muted=e.target.checked;localStorage.setItem('omen_mute',String(e.target.checked))};
 $('apiform').onsubmit=async e=>{e.preventDefault();try{const candidate=validAPI(e.target.elements.api.value);if(!candidate)throw Error('استخدم رابط HTTPS صحيح.');const b=await api('/api/config',undefined,candidate);if(!('applicationsReady' in b))throw Error('الرابط مش خدمة أومن الجديدة.');if(candidate!==apiBase){token='';sessionStorage.removeItem('queue_session');user=null;application=null}apiBase=candidate;localStorage.setItem('omen_api',apiBase);applyConfig(b);await refresh();toast('تم ربط الخدمة.');$('preferences').close()}catch(error){toast(error.message)}};
-if(params.get('auth_error')){history.replaceState(null,'',location.pathname+location.search+'#apply');route();toast(params.get('auth_error')==='join'?'لازم تنضم لديسكورد أومن الأول، وبعدها تسجّل بنفس الحساب.':'تعذر التحقق من عضويتك. حاول تاني لاحقًا.')}
+if(params.get('auth_error')||params.get('login_error')){history.replaceState(null,'',location.pathname+location.search+'#apply');route();toast(params.get('auth_error')==='join'?'لازم تنضم لديسكورد أومن الأول، وبعدها تسجّل بنفس الحساب.':'تعذر التحقق من عضويتك. حاول تاني لاحقًا.')}
 refresh();setInterval(refresh,12000);setInterval(()=>{if(lastQueue)renderQueue(lastQueue)},1000);

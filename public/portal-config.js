@@ -1,2 +1,2 @@
-// Public API origin only. Never add a Discord token or client secret here.
-window.PORTAL_CONFIG = {apiBase: ''};
+// Public API URL only. Credentials remain in Railway Variables on Bots_Turbo.
+window.PORTAL_CONFIG = {apiBase: 'https://botsturbo-production.up.railway.app/omen'};
